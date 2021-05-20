@@ -8,8 +8,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/DataDog/kafka-kit/v3/kafkazk"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
 
 	"github.com/jamiealquiza/envy"
 	dd "github.com/zorkian/go-datadog-api"
@@ -30,6 +34,10 @@ type Config struct {
 	Verbose     bool
 	DryRun      bool
 	Compression bool
+
+	KubeconfigPath         string
+	BrokerPodNamespace     string
+	BrokerPodLabelSelector string
 }
 
 var (
@@ -52,6 +60,10 @@ func init() {
 	flag.BoolVar(&config.DryRun, "dry-run", false, "Dry run mode (don't reach Zookeeper)")
 	flag.BoolVar(&config.Compression, "compression", true, "Whether to compress metrics data written to ZooKeeper")
 
+	flag.StringVar(&config.KubeconfigPath, "kubeconfig", filepath.Join(homedir.HomeDir(), ".kube", "config"), "absolute path to the kubeconfig file")
+	flag.StringVar(&config.BrokerPodNamespace, "broker-pod-namespace", "default", "Namespace of the Kafka broker pods")
+	flag.StringVar(&config.BrokerPodLabelSelector, "broker-pod-label-selector", "app=kafka", "Label selector to select all Kafka broker pods")
+
 	envy.Parse("METRICSFETCHER")
 	flag.Parse()
 
@@ -66,6 +78,26 @@ func init() {
 }
 
 func main() {
+	// ====================== VolumeStatsReader demo ======================
+
+	// use the current context in kubeconfig
+	// TODO: in-cluster config is different.
+	kubeConfig, err := clientcmd.BuildConfigFromFlags("", config.KubeconfigPath)
+	exitOnErr(err)
+
+	// create the clientset
+	clientset, err := kubernetes.NewForConfig(kubeConfig)
+	exitOnErr(err)
+
+	vsr := NewVolumeStatsReader(clientset)
+	vs, err := vsr.Get(config.BrokerPodNamespace, config.BrokerPodLabelSelector)
+	exitOnErr(err)
+	vsj, _ := json.MarshalIndent(vs, "", " ")
+	fmt.Printf("%+v\n", string(vsj))
+	os.Exit(0)
+
+	// ====================== END VolumeStatsReader demo ======================
+
 	// Init, validate dd client.
 	config.Client = dd.NewClient(config.APIKey, config.AppKey)
 	ok, err := config.Client.Validate()
